@@ -1,5 +1,6 @@
 package com.mandis.orderservice.service;
 
+import com.mandis.orderservice.dto.InventoryResponse;
 import com.mandis.orderservice.dto.OrderLineItemsDto;
 import com.mandis.orderservice.dto.OrderRequest;
 import com.mandis.orderservice.model.Order;
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -25,25 +27,32 @@ public class OrderService {
         Order order = new Order();
         order.setOrderNumber(UUID.randomUUID().toString());
 
-        //for each item of order, map request to object, set in list, save as the list of items of the order
         List<OrderLineItems> orderLineItems = orderRequest.getOrderLineItemsDtoList()
                 .stream()
                 .map(this::mapToDto)
                 .toList();
+
         order.setOrderLineItemsList(orderLineItems);
 
-        //call inventory service and place order if pro product is in stock
-        Boolean result = webClient.get()
-                        .uri("http://localhost:8082/api/inventory")
-                        .retrieve()
-                        .bodyToMono(Boolean.class)
-                        .block();
+        List<String> skuCodes = order.getOrderLineItemsList().stream()
+                .map(OrderLineItems::getSkuCode)
+                .toList();
 
-        if (result) {
+        // call Inventory Service, and place order if product is in stock
+        InventoryResponse[] inventoryResponsArray = webClient.get()
+                .uri("http://localhost:8082/api/inventory",
+                        uriBuilder -> uriBuilder.queryParam("skuCode", skuCodes).build())
+                .retrieve()
+                .bodyToMono(InventoryResponse[].class)
+                .block();
+
+        boolean allProductsInStock = Arrays.stream(inventoryResponsArray)
+                .allMatch(InventoryResponse::isInStock);
+
+        if(allProductsInStock){
             orderRepository.save(order);
-        }
-        else {
-            throw new IllegalArgumentException("Product out of stock.");
+        } else {
+            throw new IllegalArgumentException("Product is not in stock, please try again later");
         }
     }
 
